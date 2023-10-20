@@ -1,0 +1,36 @@
+
+# listops
+PYTHONPATH="$(pwd)":"$PYTHON_PATH" python lra_benchmarks/listops/train.py \
+      --config=lra_benchmarks/listops/configs/sinkformer_base.py \
+      --model_dir=/tmp/listops \
+      --task_name=basic
+
+
+# Text Classification
+PYTHONPATH="$(pwd)":"$PYTHON_PATH" python lra_benchmarks/text_classification/train.py \
+      --config=lra_benchmarks/text_classification/configs/sliceformer_base.py \
+      --model_dir=/tmp/text_classification \
+      --task_name=imdb_reviews 
+
+
+# Document Retrieval
+PYTHONPATH="$(pwd)":"$PYTHON_PATH" python  lra_benchmarks/matching/train.py \
+      --config=lra_benchmarks/matching/configs/sinkformer_base.py \
+      --model_dir=/tmp/matching \
+      --task_name=aan 
+
+# Image
+PYTHONPATH="$(pwd)":"$PYTHON_PATH" python lra_benchmarks/image/train.py \
+      --config=lra_benchmarks/image/configs/cifar10/sinkformer_base.py \
+      --model_dir=/tmp/image \
+      --task_name=cifar10 
+
+# Pathfinder
+PYTHONPATH="$(pwd)":"$PYTHON_PATH" python lra_benchmarks/image/train.py \
+      --config=lra_benchmarks/image/configs/pathfinder32/sliceformer_base.py \
+      --model_dir=/tmp/pathfinder32 \
+      --task_name=pathfinder32_hard
+
+
+
+
