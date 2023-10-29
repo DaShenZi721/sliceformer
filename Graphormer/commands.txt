@@ -1,0 +1,16 @@
+
+# train
+nohup python -u graphormer/entry.py \
+      --num_workers 8 --seed 42 --dataset_name 'PCQM4M-LSC' --gpus 1 --accelerator 'ddp' --precision 16 --gradient_clip_val 5.0 \
+       --tot_updates 1000000 \
+      --batch_size 256 --ffn_dim 768  --hidden_dim 768 --dropout_rate 0.1 --n_layers 12 --peak_lr 2e-4 --edge_type multi_hop --multi_hop_max_dist 5 \
+      --default_root_dir 'exps/pcq' > nohup.out 2>&1 &
+
+
+# validate
+
+nohup python -u graphormer/entry.py --validate\
+      --num_workers 8 --seed 42 --dataset_name 'PCQM4M-LSC' --gpus 1 --accelerator 'ddp' --precision 16 --gradient_clip_val 5.0 \
+       --tot_updates 1000000 \
+      --batch_size 256 --ffn_dim 768  --hidden_dim 768 --dropout_rate 0.1 --n_layers 12 --peak_lr 2e-4 --edge_type multi_hop --multi_hop_max_dist 5 \
+      --default_root_dir 'exps/pcq' > nohup.out 2>&1 &

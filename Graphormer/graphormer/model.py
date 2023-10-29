@@ -187,14 +187,19 @@ class Graphormer(pl.LightningModule):
 
         # transfomrer encoder
         for enc_layer in self.layers:
-            output = enc_layer(output, graph_attn_bias)
+            output, cls_indices = enc_layer(output, graph_attn_bias)
         output = self.final_ln(output)
 
 
         # output part
         if self.dataset_name == 'PCQM4M-LSC':
-            # get whole graph rep
-            output = self.out_proj(output[:, 0, :])
+            if cls_indices is not None:
+                cls_indices = cls_indices.unsqueeze(1).repeat(1, 1, output.size(-1))
+                output = output.gather(dim=-2, index=cls_indices).squeeze()
+                output = self.out_proj(output)
+            else:                
+                # get whole graph rep
+                output = self.out_proj(output[:, 0, :])
         else:
             output = self.downstream_out_proj(output[:, 0, :])
         return output
@@ -393,7 +398,7 @@ class MultiHeadAttention(nn.Module):
         self.weight = nn.Parameter(torch.randn(2))
         self.activation = nn.Softmax(dim=-1)
 
-    def forward(self, q, k, v, attn_bias=None):
+    def forward(self, q, k, v, attn_bias=None, col_descend=None):
         orig_q_size = q.size()
 
         d_k = self.att_size
@@ -426,7 +431,11 @@ class MultiHeadAttention(nn.Module):
         x = self.output_layer(x)
 
         assert x.size() == orig_q_size
-        return x
+        
+        # Cross-Feature Sparse Attention
+        cls_indices = None
+        
+        return x, cls_indices
 
 
 class SWD(nn.Module):
@@ -453,35 +462,84 @@ class SWD(nn.Module):
         d_k = self.att_size
         d_v = self.att_size
         batch_size = q.size(0)
-
-        v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
-        v = v.transpose(1, 2)  # [b, h, v_len, d_v]
+        
+        # Cross-Feature Sparse Attention
+        cls_indices = None
 
         # x = sort((S+E)V)
+        # v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        # v = v.transpose(1, 2)  # [b, h, v_len, d_v]
         # x = attn_bias
         # x = self.att_dropout(x)
         # x = x.matmul(v)  # [b, h, q_len, attn]
         # x_sorted, x_indices = x.sort(dim=-2)
         # x = x_sorted
-
+        # x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        # x = x.view(batch_size, -1, self.num_heads * d_v)
+        
         # x = softmax(S+E)V+sort(V)
-        x = attn_bias
-        x = torch.softmax(x, dim=3)
-        x = self.att_dropout(x)
-        x = x.matmul(v)
-        v_sorted, v_indices = v.sort(dim=-2)
-        if col_descend is not None:
-            col_descend = torch.tensor(col_descend, device=v_sorted.device, dtype=torch.long).flatten()
-            v_sorted[..., col_descend] = v_sorted[..., col_descend].flip(-2)
-        x = x + v_sorted
+        # v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        # v = v.transpose(1, 2)  # [b, h, v_len, d_v]
+        # x = attn_bias
+        # x = torch.softmax(x, dim=3)
+        # x = self.att_dropout(x)
+        # x = x.matmul(v)
+        # v_sorted, v_indices = v.sort(dim=-2)
+        # x = x + v_sorted
+        # x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        # x = x.view(batch_size, -1, self.num_heads * d_v)
+        
+        # Haar-modulation
+        # x = softmax(S+E)V+sort(V)
+        # v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        # v = v.transpose(1, 2)  # [b, h, v_len, d_v]
+        # x = attn_bias
+        # x = torch.softmax(x, dim=3)
+        # x = self.att_dropout(x)
+        # x = x.matmul(v)
+        # v_sorted, v_indices = v.sort(dim=-2)
+        # if col_descend is not None:
+        #     col_descend = torch.tensor(col_descend, device=v_sorted.device, dtype=torch.long).flatten()
+        #     v_sorted[..., col_descend] = v_sorted[..., col_descend].flip(-2)
+        # x = x + v_sorted
+        # x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        # x = x.view(batch_size, -1, self.num_heads * d_v)
 
-        x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
-        x = x.view(batch_size, -1, self.num_heads * d_v)
+        # Cross-Feature Sparse Attention
+        # x = sort(softmax(S+E)V)
+        # v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        # v = v.transpose(1, 2)  # [b, h, v_len, d_v]
+        
+        # x = attn_bias
+        # x = torch.softmax(x, dim=3)
+        # x = self.att_dropout(x)
+        # x = x.matmul(v)
+        # x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        # x = x.view(batch_size, -1, self.num_heads * d_v) # [b, q_len, h * attn]
+
+        # x_sorted, x_indices = x.sort(dim=-2)
+        # _, x1_indices_T = x_indices[:, :, :1].sort(dim=-2)
+        # x1_indices_T = x1_indices_T.repeat(1, 1, x.size(-1))
+        # out = x_sorted.gather(dim=-2, index=x1_indices_T)
+        # x = torch.cat([x[:, :, :1], out[:, :, 1:]], dim=-1)
+        # cls_indices = torch.argmax(x[:, :, :1], dim=1)
+        
+        # Cross-Feature Sparse Attention
+        # x = sort(V)
+        v = self.linear_v(v)  # [b, v_len, h * d_v]
+        x = v
+
+        x_sorted, x_indices = x.sort(dim=-2)
+        _, x1_indices_T = x_indices[:, :, :1].sort(dim=-2)
+        x1_indices_T = x1_indices_T.repeat(1, 1, x.size(-1))
+        out = x_sorted.gather(dim=-2, index=x1_indices_T)
+        x = torch.cat([x[:, :, :1], out[:, :, 1:]], dim=-1)
+        cls_indices = torch.argmax(x[:, :, :1], dim=1)
 
         x = self.output_layer(x)
 
         assert x.size() == orig_q_size
-        return x
+        return x, cls_indices
 
 
 class EncoderLayer(nn.Module):
@@ -504,7 +562,7 @@ class EncoderLayer(nn.Module):
 
     def forward(self, x, attn_bias=None):
         y = self.self_attention_norm(x)
-        y = self.self_attention(y, y, y, attn_bias, self.col_descend)
+        y, cls_indices = self.self_attention(y, y, y, attn_bias, self.col_descend)
         y = self.self_attention_dropout(y)
         x = x + y
 
@@ -512,4 +570,4 @@ class EncoderLayer(nn.Module):
         y = self.ffn(y)
         y = self.ffn_dropout(y)
         x = x + y
-        return x
+        return x, cls_indices
