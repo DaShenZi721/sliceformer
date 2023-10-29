@@ -478,16 +478,16 @@ class SWD(nn.Module):
         # x = x.view(batch_size, -1, self.num_heads * d_v)
         
         # x = softmax(S+E)V+sort(V)
-        # v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
-        # v = v.transpose(1, 2)  # [b, h, v_len, d_v]
-        # x = attn_bias
-        # x = torch.softmax(x, dim=3)
-        # x = self.att_dropout(x)
-        # x = x.matmul(v)
-        # v_sorted, v_indices = v.sort(dim=-2)
-        # x = x + v_sorted
-        # x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
-        # x = x.view(batch_size, -1, self.num_heads * d_v)
+        v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        v = v.transpose(1, 2)  # [b, h, v_len, d_v]
+        x = attn_bias
+        x = torch.softmax(x, dim=3)
+        x = self.att_dropout(x)
+        x = x.matmul(v)
+        v_sorted, v_indices = v.sort(dim=-2)
+        x = x + v_sorted
+        x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        x = x.view(batch_size, -1, self.num_heads * d_v)
         
         # Haar-modulation
         # x = softmax(S+E)V+sort(V)
@@ -526,15 +526,15 @@ class SWD(nn.Module):
         
         # Cross-Feature Sparse Attention
         # x = sort(V)
-        v = self.linear_v(v)  # [b, v_len, h * d_v]
-        x = v
+        # v = self.linear_v(v)  # [b, v_len, h * d_v]
+        # x = v
 
-        x_sorted, x_indices = x.sort(dim=-2)
-        _, x1_indices_T = x_indices[:, :, :1].sort(dim=-2)
-        x1_indices_T = x1_indices_T.repeat(1, 1, x.size(-1))
-        out = x_sorted.gather(dim=-2, index=x1_indices_T)
-        x = torch.cat([x[:, :, :1], out[:, :, 1:]], dim=-1)
-        cls_indices = torch.argmax(x[:, :, :1], dim=1)
+        # x_sorted, x_indices = x.sort(dim=-2)
+        # _, x1_indices_T = x_indices[:, :, :1].sort(dim=-2)
+        # x1_indices_T = x1_indices_T.repeat(1, 1, x.size(-1))
+        # out = x_sorted.gather(dim=-2, index=x1_indices_T)
+        # x = torch.cat([x[:, :, :1], out[:, :, 1:]], dim=-1)
+        # cls_indices = torch.argmax(x[:, :, :1], dim=1)
 
         x = self.output_layer(x)
 
