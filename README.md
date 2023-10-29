@@ -21,7 +21,7 @@ If you find out work useful, please cite our paper at:
 @article{
   title={Sliceformer: Make Multi-head Attention as Simple as Sorting in Discriminative Tasks},
   author={Shen Yuan, Hongteng Xu},
-  journal={arXiv preprint arXiv:1712.06139},
+  journal={arXiv},
   year={2023}
 }
 ```
