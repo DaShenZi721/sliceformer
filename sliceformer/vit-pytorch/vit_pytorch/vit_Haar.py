@@ -71,7 +71,7 @@ class Attention(nn.Module):
         self.attn = attn
         self.col_descend = Haar_wavelet_basis(num_col=dim_head, num_basis=2 ** layer_idx)
 
-    def forward(self, x):
+    def forward(self, x, training=True):
         # with torch.no_grad():
         #     self.to_qkv.weight.div_(torch.norm(self.to_qkv.weight, dim=1, keepdim=True))
         qkv = self.to_qkv(x).chunk(3, dim=-1)
@@ -92,6 +92,8 @@ class Attention(nn.Module):
             out = torch.matmul(attn, v)
         elif self.attn == 'swd':
             out, attn = self.swd(q, k, v, self.col_descend)
+            # U, S, Vh = torch.linalg.svd(out)
+            # print(S[0,0])
 
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out), attn
@@ -108,29 +110,31 @@ class Transformer(nn.Module):
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
 
-    def forward(self, x):
-        attn_weights = None
+    def forward(self, x, training=True):
+        attn_weights = []
         for idx, (attn, ff) in enumerate(self.layers):
-            if idx == 0:
-                # attn_x, attn_matrix = attn(x, layer_idx=idx)
-                # x_sorted, x_indices = x.sort(dim=-2, descending=True)
-                # x = attn_x + x_sorted
-                attn_x, attn_matrix = attn(x)
+            
+            # if idx == 0:
+            #     # attn_x, attn_matrix = attn(x, layer_idx=idx)
+            #     # x_sorted, x_indices = x.sort(dim=-2, descending=True)
+            #     # x = attn_x + x_sorted
+            #     attn_x, attn_matrix = attn(x, training=training)
 
-                x_sorted, x_indices = x.sort(dim=-2, descending=True)
-                col_descend = Haar_wavelet_basis(num_col=x.size(-1), num_basis=2 ** len(self.layers))
-                col_descend = torch.tensor(col_descend, device=x.device, dtype=torch.long).flatten()
-                x_sorted[..., col_descend] = x_sorted[..., col_descend].flip(-2)
+            #     x_sorted, x_indices = x.sort(dim=-2, descending=True)
+            #     col_descend = Haar_wavelet_basis(num_col=x.size(-1), num_basis=2 ** len(self.layers))
+            #     col_descend = torch.tensor(col_descend, device=x.device, dtype=torch.long).flatten()
+            #     x_sorted[..., col_descend] = x_sorted[..., col_descend].flip(-2)
 
-                x = attn_x + x_sorted
-            else:
-                attn_x, attn_matrix = attn(x)
-                x = attn_x + x
-
+            #     x = attn_x + x_sorted
+            # else:
+            #     attn_x, attn_matrix = attn(x)
+            #     x = attn_x + x
+            
+            attn_x, attn_matrix = attn(x)
+            x = attn_x + x
             x = ff(x) + x
-            # attn_weights.append(attn_matrix.cpu().detach().numpy())
-            if attn_weights is None and attn_matrix is not None:
-                attn_weights = attn_matrix.detach().clone()
+            attn_weights.append(attn_matrix.detach().clone().cpu())
+            
         return x, attn_weights
 
 
@@ -167,7 +171,7 @@ class ViT_Haar(nn.Module):
             nn.Linear(dim, num_classes)
         )
 
-    def forward(self, img, stage='train'):
+    def forward(self, img, training=True):
         x = self.to_patch_embedding(img)
         b, n, _ = x.shape
 
@@ -176,7 +180,7 @@ class ViT_Haar(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        trans_x, attn_weights = self.transformer(x)
+        trans_x, attn_weights = self.transformer(x, training=training)
         x = trans_x
 
         x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]

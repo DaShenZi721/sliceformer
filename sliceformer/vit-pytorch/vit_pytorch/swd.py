@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import time
 
 use_cuda = torch.cuda.is_available()
@@ -105,7 +106,7 @@ class SWD4(nn.Module):
     def __init__(self):
         super(SWD4, self).__init__()
 
-    def forward(self, q, k, attn_mask, stage='train'):
+    def forward(self, q, k, attn_mask, training=True):
         # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
         batch_size, n_heads, q_len, d_k = q.shape
         _, _, k_len, _ = k.shape
@@ -155,7 +156,7 @@ class SWD5(nn.Module):
     def __init__(self):
         super(SWD5, self).__init__()
 
-    def forward(self, q, k, v, stage='train'):
+    def forward(self, q, k, v, training=True):
         # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
         batch_size, n_heads, q_len, d_k = q.shape
         _, _, k_len, _ = k.shape
@@ -168,7 +169,7 @@ class SWD5(nn.Module):
         c = torch.exp(-torch.abs(q_sorted - k_sorted).pow(2))
         # |c_q| : (batch_size, n_heads, q_len*d_k)
         c_q = c.gather(-2, q_indices).view(batch_size, n_heads, -1) / d_k
-        # if stage != 'train':
+        # if training != True:
         #     c_q = (1 - c_q.detach() + c_q) / d_k
 
         p = torch.zeros(batch_size, n_heads, q_len*k_len, device=q.device)
@@ -183,7 +184,7 @@ class SWD6(nn.Module):
     def __init__(self):
         super(SWD6, self).__init__()
 
-    def forward(self, q, k, v, stage='train'):
+    def forward(self, q, k, v, training=True):
         # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
         batch_size, n_heads, q_len, d_k = q.shape
         _, _, k_len, _ = k.shape
@@ -215,7 +216,7 @@ class SWD7(nn.Module):
         self.weight = nn.Parameter(torch.randn(self.N))
         self.activation = nn.Softmax(dim=-1)
 
-    def forward(self, q, k, v, stage='train'):
+    def forward(self, q, k, v, col_descend=None, training=True):
         # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
         batch_size, n_heads, q_len, d_k = q.shape
         _, _, k_len, _ = k.shape
@@ -273,18 +274,18 @@ class SWD7(nn.Module):
         # out = new_v
 
         # max exchange
-        # new_v = v.clone()
-        # values, indices = torch.max(v, dim=-2)
-        # v_cls = v[:, :, 0, :]
-        # new_v[:, :, 0, :] = values
-        # new_v.scatter_(-2, indices.unsqueeze(-2), v_cls.unsqueeze(-2))
-        # out = new_v
+        new_v = v.clone()
+        values, indices = torch.max(v, dim=-2)
+        v_cls = v[:, :, 0, :]
+        new_v[:, :, 0, :] = values
+        new_v.scatter_(-2, indices.unsqueeze(-2), v_cls.unsqueeze(-2))
+        out = new_v
 
         # sorting
         # v_sorted, v_indices = v.sort(dim=-2)
         # out = v_sorted
-        v_sorted, v_indices = v.abs().sort(dim=-2, descending=True)
-        out = v_sorted
+        # v_sorted, v_indices = v.abs().sort(dim=-2, descending=True)
+        # out = v_sorted
 
         # v_sorted, v_indices = v.sort(dim=-2)
         #
@@ -324,13 +325,16 @@ class SWD7(nn.Module):
         # print(out[0,0,:,0].max(), out[0,0,:,0].min())
         # print(out[0,0,:,0])
         # 1/0
-        return out, None
+        return out, out
 
 class SWD8(nn.Module):
+    ''' 
+        Haar-modulation
+    '''
     def __init__(self):
         super(SWD8, self).__init__()
 
-    def forward(self, q, k, v, col_descend):
+    def forward(self, q, k, v, col_descend=None, training=True):
         # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
         d_v = v.size(-1)
 
@@ -339,7 +343,8 @@ class SWD8(nn.Module):
 
         col_descend = torch.tensor(col_descend, device=out.device, dtype=torch.long).flatten()
         out[..., col_descend] = out[..., col_descend].flip(-2)
-        return out, None
+        # v_indices[..., col_descend] = v_indices[..., col_descend].flip(-2)
+        return out, out
 
 def Haar_wavelet_basis(num_col, num_basis):
     interval = max(1, num_col // num_basis)
@@ -349,3 +354,158 @@ def Haar_wavelet_basis(num_col, num_basis):
         idx_basis.extend(list(range(idx_basis[-1] + interval, num_col)))
     return idx_basis
 
+
+class SWD9(nn.Module):
+    ''' 
+        Cross-Feature Sparse Attention
+    '''
+    def __init__(self):
+        super(SWD9, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        d_v = v.size(-1)
+
+        v_sorted, v_indices = v.sort(dim=-2)
+        v1_indices = torch.cat([v_indices[:, :, :, 1:], v_indices[:, :, :, 0].unsqueeze(-1)], dim=-1)
+        _, v1_indices_T = v1_indices.sort(dim=-2)
+        
+        out = v.gather(dim=-2, index=v_indices)
+        out = out.gather(dim=-2, index=v1_indices_T)
+        
+        attn = v_indices.gather(dim=-2, index=v1_indices_T)[:,:,:,0]
+        attn = F.one_hot(attn)
+        
+        return out, attn
+
+
+class SWD10(nn.Module):
+    ''' 
+        multi-head sliceformer
+    '''
+    def __init__(self):
+        super(SWD10, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        d_v = v.size(-1)
+        sum_head = v.sum(dim=-1)
+        sum_sorted, sum_indices = sum_head.sort(dim=-1)
+        sum_indices = sum_indices.unsqueeze(-1).repeat(1, 1, 1, d_v)
+        
+        out = v.gather(dim=-2, index=sum_indices)
+        
+        return out, out
+    
+
+class SWD11(nn.Module):
+    ''' 
+        Cross-Multi-Feature Sparse Attention
+    '''
+    def __init__(self):
+        super(SWD11, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        d_v = v.size(-1)
+        v_len = v.size(-2)
+        
+        K = 3
+
+        v_sorted, v_indices = v.sort(dim=-2)
+        v_onehot = F.one_hot(v_indices)
+        for k in range(1, K+1):
+            vk_indices = torch.cat([v_indices[:, :, :, k:], v_indices[:, :, :, :k]], dim=-1)
+            _, vk_indices_T = vk_indices.sort(dim=-2)
+            vk_indices_T = vk_indices_T.unsqueeze(-1).repeat(1, 1, 1, 1, v_len)
+            vk_onehot = v_onehot.gather(2, vk_indices_T)
+            if k == 1:
+                P = vk_onehot
+            else:
+                P = P + vk_onehot
+        
+        P = P.permute(0, 1, 3, 2, 4).float()
+        out = torch.matmul(P, v.unsqueeze(-1).permute(0, 1, 3, 2, 4)).squeeze(-1).permute(0, 1, 3, 2)
+
+        return out, out
+
+class SWD12(nn.Module):
+    ''' 
+        QK index sort V 
+    '''
+    def __init__(self):
+        super(SWD12, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        d_v = v.size(-1)
+
+        _, k_indices = k.sort(dim=-2)
+        _, q_indices = q.sort(dim=-2)
+        _, q_indices_T = q_indices.sort(dim=-2)
+        
+        out = v.gather(dim=-2, index=k_indices)
+        out = out.gather(dim=-2, index=q_indices_T)
+        
+        return out, out
+    
+
+class SWD13(nn.Module):
+    ''' 
+        Q index sort V 
+    '''
+    def __init__(self):
+        super(SWD13, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        d_v = v.size(-1)
+
+        _, q_indices = q.sort(dim=-2)
+        out = v.gather(dim=-2, index=q_indices)
+        
+        return out, out
+    
+
+class SWD14(nn.Module):
+    ''' 
+        Cross-Feature Sparse Attention
+    '''
+    def __init__(self):
+        super(SWD14, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, n_heads, q_len, d_k), |k| : (batch_size, n_heads, k_len, d_k)
+        v_len = v.size(-2)
+        d_v = v.size(-1)
+
+        v_sorted, v_indices = v.sort(dim=-2)
+        _, v1_indices_T = v_indices[:, :, :, :1].sort(dim=-2)
+        v1_indices_T = v1_indices_T.repeat(1, 1, 1, d_v)
+        out = v_sorted.gather(dim=-2, index=v1_indices_T)
+        out = torch.cat([v[:, :, :, :1], out[:, :, :, 1:]], dim=-1)
+        
+        return out, out
+
+
+class SWD15(nn.Module):
+    ''' 
+        Equivalent Cross-Feature Sparse Attention
+    '''
+    def __init__(self):
+        super(SWD15, self).__init__()
+
+    def forward(self, q, k, v, col_descend=None, training=True):
+        # |q| : (batch_size, q_len, d_k), |k| : (batch_size, k_len, d_k)
+        v_len = v.size(-2)
+        d_v = v.size(-1)
+
+        v_sorted, v_indices = v.sort(dim=-2)
+        _, v1_indices_T = v_indices[:, :, :1].sort(dim=-2)
+        v1_indices_T = v1_indices_T.repeat(1, 1, d_v)
+        out = v_sorted.gather(dim=-2, index=v1_indices_T)
+        out = torch.cat([v[:, :, :1], out[:, :, 1:]], dim=-1)
+        
+        cls_indices = torch.argmin(v[:, :, :1], dim=1)
+        
+        return out, out, cls_indices
