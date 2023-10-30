@@ -18,10 +18,12 @@ For more detailed information, please refer to the README files in each of these
 If you find out work useful, please cite our paper at:
 
 ```
-@article{
-  title={Sliceformer: Make Multi-head Attention as Simple as Sorting in Discriminative Tasks},
-  author={Shen Yuan, Hongteng Xu},
-  journal={arXiv},
-  year={2023}
+@misc{yuan2023sliceformer,
+      title={Sliceformer: Make Multi-head Attention as Simple as Sorting in Discriminative Tasks}, 
+      author={Shen Yuan and Hongteng Xu},
+      year={2023},
+      eprint={2310.17683},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
 }
 ```
