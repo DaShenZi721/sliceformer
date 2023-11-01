@@ -1,7 +1,7 @@
 # Sliceformer 
 
 
-This repo is the official implementation of "Sliceformer: Make Multi-head Attention as Simple as Sorting in Discriminative Tasks".
+This repo is the official implementation of "[Sliceformer: Make Multi-head Attention as Simple as Sorting in Discriminative Tasks](https://arxiv.org/abs/2310.17683)".
 
 We provide the Sliceformer code for various tasks, including the LRA benchmark, image classification, text classification, and molecular property prediction.
 
